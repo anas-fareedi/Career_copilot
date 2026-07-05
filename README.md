@@ -1,7 +1,7 @@
 # Career_copilot
 Multi-agent system for automation to applying jobs and internship s completely
 
-## pending
+## pending 
 -One deployed demo (or 60s screencast) reachable from README..
 -3 prepared project pitches (30s, 2min, 5min versions).
 -Advanced scaling/infra — fix by documenting tradeoffs and showing a simple cost/latency estimate for your deployed app.
