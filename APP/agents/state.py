@@ -1,24 +1,43 @@
+"""
+LangGraph shared state for the Career Copilot agent pipeline.
+
+All 5 agents read from and write to this state object.
+The Supervisor Agent uses `current_step` to track progress
+and `error` to halt the pipeline on failure.
+"""
+
 from typing import TypedDict, Optional, List
 
 
 class AgentState(TypedDict):
     """
-    The state of the career copilot workflow.
-    Uses plain Python types so LangGraph can serialize/deserialize cleanly.
+    Shared state passed through the 5-agent LangGraph pipeline.
+
+    Input keys are set before the graph is invoked.
+    Output keys are populated by each agent node in sequence.
     """
-    # Resume content extracted from the uploaded PDF
-    raw_resume: str
 
-    # User-supplied preferences from the form
-    interests: str        # e.g. "AI, machine learning, backend"
-    goal: str             # e.g. "Land a software engineering role at a product company"
-    job_type: str         # e.g. "internship", "full-time", "part-time", "remote"
-    job_category: str     # e.g. "Software Engineering", "Data Science", "Product Management"
+    # ── Input (set before invoking the graph) ─────────────────────────────────
+    user_id: str            # Supabase UUID of the authenticated user
+    raw_resume: str         # Plain text extracted from uploaded PDF
+    user_preferences: dict  # UserPreferences dict (roles, locations, job_type, etc.)
 
-    # Agent outputs — stored as plain dicts for LangGraph serialization
-    extracted_profile: Optional[dict]
-    found_jobs: Optional[List[dict]]
-    tailoring_results: Optional[List[dict]]
+    # ── Profile Agent output ──────────────────────────────────────────────────
+    extracted_profile: Optional[dict]   # ProfileExtraction.model_dump()
 
-    # A non-None value means the pipeline was halted due to an error
-    error: Optional[str]
+    # ── Discovery Agent output ────────────────────────────────────────────────
+    found_jobs: Optional[List[dict]]    # Normalised job dicts, sorted by relevance_score
+
+    # ── Resume Agent output ───────────────────────────────────────────────────
+    tailoring_results: Optional[List[dict]]  # One ApplicationTailoringResult per job
+    resume_versions: Optional[List[dict]]    # Stored ResumeVersion IDs (for audit trail)
+
+    # ── Apply Agent output ────────────────────────────────────────────────────
+    application_results: Optional[List[dict]]  # {job_id, status, message} per job
+
+    # ── Notification Agent output ─────────────────────────────────────────────
+    notifications_sent: Optional[List[str]]    # Summary strings of sent notifications
+
+    # ── Pipeline control ──────────────────────────────────────────────────────
+    current_step: str           # Name of the node currently executing
+    error: Optional[str]        # Non-None → pipeline halted, downstream agents skipped
