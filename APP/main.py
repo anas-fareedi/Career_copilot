@@ -1,116 +1,113 @@
+"""
+Career Copilot — FastAPI application entry point.
+
+Run with:
+  uvicorn APP.main:app --reload --host 0.0.0.0 --port 8000
+"""
+
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from APP.agents.orchestrator import copilot_graph
 from APP.core.config import settings
 from APP.core.database import engine
 from APP.models.base import Base
-from APP.utils import extract_text_from_pdf
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Startup: create all database tables (idempotent — skips existing tables).
-    This avoids a crash on first run when tables don't exist yet.
+    Application lifespan: create DB tables on startup, clean up on shutdown.
+    All models must be imported before `create_all` so their metadata is registered.
     """
-    logger.info("Starting up — creating database tables if they don't exist...")
-    # Import all models so their metadata is registered before create_all
-    import APP.models.user  # noqa: F401
-    import APP.models.jobs  # noqa: F401
+    logger.info("Starting up Career Copilot API...")
+
+    # Import all models so SQLAlchemy metadata is populated
+    import APP.models.user   # noqa: F401
+    import APP.models.jobs   # noqa: F401
+    import APP.models.resume  # noqa: F401
 
     try:
         Base.metadata.create_all(bind=engine)
-        logger.info("Database tables ready.")
-    except Exception as e:
-        logger.warning(
-            f"Could not connect to database on startup: {e}. Continuing without DB."
-        )
+        logger.info("Database tables created/verified.")
+    except Exception as exc:
+        logger.warning("Could not connect to database on startup: %s. Continuing without DB.", exc)
 
-    # Import graph here (deferred) so startup errors in graph init are visible clearly
-    app.state.copilot_graph = copilot_graph
-    logger.info("LangGraph pipeline compiled and ready.")
-
-    yield  # App runs here
-
-    logger.info("Shutting down.")
-
-
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-
-@app.get("/", tags=["Health"])
-def read_root():
-    return {"status": "ok", "message": f"Welcome to {settings.PROJECT_NAME}!"}
-
-
-@app.get("/health", tags=["Health"])
-def health_check():
-    return {"status": "ok"}
-
-
-@app.post("/api/v1/copilot/run", tags=["Copilot"])
-async def run_copilot(resume_file: UploadFile = File(...)):
-    """
-    Run the full career copilot pipeline from a PDF resume:
-    1. Profile extraction (Agent 1)
-    2. Opportunity finding (Agent 2 — mocked)
-    3. Resume tailoring (Agent 3)
-    """
-    if resume_file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a PDF.")
-
+    # Pre-compile the LangGraph pipeline so the first request is fast
     try:
-        # Read content from the uploaded file
-        resume_content = await resume_file.read()
-        raw_resume = extract_text_from_pdf(resume_content)
+        from APP.agents.supervisor import copilot_graph  # noqa: F401
+        logger.info("LangGraph supervisor pipeline compiled and ready.")
+    except Exception as exc:
+        logger.warning("Could not pre-compile LangGraph pipeline: %s", exc)
 
-        if not raw_resume or not raw_resume.strip():
-            raise HTTPException(
-                status_code=400, detail="Could not extract text from the PDF."
-            )
+    yield
 
-    except Exception as e:
-        logger.exception("Failed to read or parse PDF file.")
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {e}")
+    logger.info("Shutting down Career Copilot API.")
 
-    initial_state = {
-        "raw_resume": raw_resume.strip(),
-        "extracted_profile": None,
-        "found_jobs": None,
-        "tailoring_results": None,
-        "error": None,
-    }
 
-    try:
-        copilot_graph = app.state.copilot_graph
-        final_state = copilot_graph.invoke(initial_state)
-        
-        logger.info(f"Final state keys: {final_state.keys()}")
-        logger.info(f"Error in final state: {final_state.get('error')}")
+def create_app() -> FastAPI:
+    """App factory — creates and configures the FastAPI application."""
 
-        if final_state.get("error"):
-            logger.error(f"Pipeline error: {final_state['error']}")
-            raise HTTPException(status_code=500, detail=final_state["error"])
+    app = FastAPI(
+        title=settings.PROJECT_NAME,
+        version="0.2.0",
+        description=(
+            "AI-powered career agent: autonomous job discovery, resume tailoring, "
+            "application submission, and status tracking."
+        ),
+        docs_url="/docs",
+        redoc_url="/redoc",
+        lifespan=lifespan,
+    )
 
+    # ── CORS ───────────────────────────────────────────────────────────────────
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ── Routers ────────────────────────────────────────────────────────────────
+    from APP.api.v1.auth import router as auth_router
+    from APP.api.v1.profile import router as profile_router
+    from APP.api.v1.jobs import router as jobs_router
+    from APP.api.v1.applications import router as applications_router
+    from APP.api.v1.pipeline import router as pipeline_router
+    from APP.api.v1.gmail import router as gmail_router
+
+    prefix = settings.API_V1_STR  # "/api/v1"
+    app.include_router(auth_router, prefix=prefix)
+    app.include_router(profile_router, prefix=prefix)
+    app.include_router(jobs_router, prefix=prefix)
+    app.include_router(applications_router, prefix=prefix)
+    app.include_router(pipeline_router, prefix=prefix)
+    app.include_router(gmail_router, prefix=prefix)
+
+    # ── Health endpoints ───────────────────────────────────────────────────────
+    @app.get("/", tags=["Health"])
+    def root():
         return {
-            "status": "success",
-            "extracted_profile": final_state.get("extracted_profile"),
-            "found_jobs": final_state.get("found_jobs"),
-            "tailoring_results": final_state.get("tailoring_results"),
+            "status": "ok",
+            "service": settings.PROJECT_NAME,
+            "version": "0.2.0",
+            "docs": "/docs",
         }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Unhandled error in copilot pipeline")
-        raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/health", tags=["Health"])
+    def health():
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()
