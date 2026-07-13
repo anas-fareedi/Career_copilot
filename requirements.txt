@@ -1,14 +1,49 @@
+# --- Web Framework ---
 fastapi
-uvicorn
-python-dotenv
+uvicorn[standard]
+python-multipart
+
+# --- Pydantic & Settings ---
 pydantic
 pydantic-settings
+
+# --- Database ---
+sqlalchemy
+psycopg2-binary
+
+# --- Auth (Supabase SDK) ---
+supabase
+python-jose[cryptography]
+passlib[bcrypt]
+
+# --- LangChain / LangGraph ---
 langchain-core
 langchain-google-genai
 langgraph
-requests
-sqlalchemy
-psycopg2-binary
-pypdf
+
+# --- Job Search ---
 google-search-results
-gradio
+
+# --- PDF Parsing ---
+pypdf
+
+# --- Background Workers ---
+celery[redis]
+redis
+
+# --- HTTP Client ---
+httpx
+
+# --- Browser Automation (Apply Agent — installed but stubbed for MVP) ---
+playwright
+
+# --- Google OAuth / Gmail API ---
+google-auth-oauthlib
+google-api-python-client
+google-auth-httplib2
+
+# --- Observability ---
+# langsmith  # uncomment when LANGCHAIN_API_KEY is set
+
+# --- Dev / Utility ---
+python-dotenv
